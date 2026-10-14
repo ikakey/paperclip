@@ -141,6 +141,17 @@ paperclipai mcp proxy --url https://YOUR-PAPERCLIP-HOST/mcp/paperclip
 ```
 
 Add `--company <organization UUID>` to login to restrict the consent choice.
+Add `--scope "paperclip:read paperclip:write"` to request exactly those scopes. Without
+`--scope`, login requests every public scope, including `offline_access`. `--scope` must
+include `paperclip:read`. Consent can still narrow the grant, for example by leaving write
+access unchecked.
+
+When the approval page runs on a different origin than the MCP endpoint (a private
+network origin set with `PAPERCLIP_MCP_AUTHORIZATION_ORIGIN`), name that origin with
+`--approval-origin https://APPROVAL-HOST`. The CLI then accepts a verification link only
+on that origin, and only if discovery also advertises the same origin. Without the flag,
+the link must be on the MCP origin. The CLI never trusts an approval origin that you did
+not name.
 Login prints a human verification URL and code. Open that URL, sign in, compare
 the code, and approve or decline. The private device code and issued tokens stay
 inside the CLI. Configure the second command as a local stdio MCP server in a host
