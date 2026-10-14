@@ -19,6 +19,21 @@ export function mcpResource(raw: string) {
     || url.username || url.password || url.search || url.hash || url.pathname !== PUBLIC_MCP_PATH) throw new Error("Use the exact Paperclip HTTPS MCP URL from Connections.");
   return url.toString();
 }
+/** Separate browser origin for approval pages; must be named explicitly, never taken from server metadata alone. */
+export function mcpApprovalOrigin(raw: string) {
+  const url = new URL(raw);
+  if ((url.protocol !== "https:" && !(url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
+    || url.username || url.password || url.search || url.hash || url.pathname !== "/") throw new Error("Use an HTTPS origin for --approval-origin, without a path.");
+  return url.origin;
+}
+/** Exact scope set to request; defaults to the full public catalog to keep existing behavior. */
+export function mcpScopes(raw?: string) {
+  if (raw === undefined) return [...PUBLIC_MCP_SCOPES] as string[];
+  const scopes = [...new Set(raw.split(/[\s,]+/).filter(Boolean))];
+  if (!scopes.includes("paperclip:read") || scopes.some(scope => !(PUBLIC_MCP_SCOPES as readonly string[]).includes(scope)))
+    throw new Error(`--scope must include paperclip:read and only use: ${PUBLIC_MCP_SCOPES.join(", ")}.`);
+  return scopes;
+}
 export function credentialPath(resource: string) {
   return path.join(resolvePaperclipHomeDir(), "mcp", createHash("sha256").update(resource).digest("hex") + ".json");
 }
@@ -113,7 +128,7 @@ async function revoke(credential: McpCredential) {
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ client_id: credential.clientId, token: credential.refreshToken ?? credential.accessToken }) });
   if (!response.ok) throw new Error("Could not revoke the previous connection.");
 }
-async function discovery(resource: string) {
+async function discovery(resource: string, approvalOrigin?: string) {
   const origin = new URL(resource).origin;
   const protectedResource = await jsonRequest(origin + "/.well-known/oauth-protected-resource" + PUBLIC_MCP_PATH);
   if (!protectedResource.ok || protectedResource.data.resource !== resource || !Array.isArray(protectedResource.data.authorization_servers)
@@ -122,6 +137,8 @@ async function discovery(resource: string) {
   if (!metadata.ok || metadata.data.issuer !== origin || metadata.data.token_endpoint !== origin + "/mcp/oauth/token"
     || metadata.data.device_authorization_endpoint !== origin + "/mcp/oauth/device_authorization"
     || metadata.data.registration_endpoint !== origin + "/mcp/oauth/register") throw new Error("This Paperclip instance does not support device login.");
+  if (approvalOrigin && approvalOrigin !== origin && metadata.data.authorization_endpoint !== approvalOrigin + "/mcp/oauth/authorize")
+    throw new Error("Paperclip advertises a different approval origin than the one you allowed.");
   return origin;
 }
 function tokens(data: Json, credential: Omit<McpCredential, "accessToken" | "expiresAt">): McpCredential {
@@ -145,16 +162,19 @@ export async function mcpRpc(resource: string, token: string, method: string, pa
   return data.result as Json;
 }
 
-export async function loginMcpDevice(raw: string, companyId?: string, notify: (message: string) => void = console.error) {
+export interface McpLoginOptions { scopes?: string[]; approvalOrigin?: string }
+export async function loginMcpDevice(raw: string, companyId?: string, notify: (message: string) => void = console.error, options: McpLoginOptions = {}) {
   const resource = mcpResource(raw);
-  const issuer = await discovery(resource);
+  const scopes = options.scopes ?? mcpScopes();
+  const approvalOrigin = options.approvalOrigin ? mcpApprovalOrigin(options.approvalOrigin) : undefined;
+  const issuer = await discovery(resource, approvalOrigin);
   const registration = await jsonRequest(issuer + "/mcp/oauth/register", { client_name: "Paperclip CLI (device)", redirect_uris: [], grant_types: [deviceGrant, "refresh_token"], response_types: [], token_endpoint_auth_method: "none" });
   if (!registration.ok || typeof registration.data.client_id !== "string") throw new Error("Could not register the Paperclip device client.");
   const clientId = registration.data.client_id;
-  const authorization = await jsonRequest(issuer + "/mcp/oauth/device_authorization", { client_id: clientId, resource, scope: PUBLIC_MCP_SCOPES.join(" "), ...(companyId ? { company_id: companyId } : {}) });
+  const authorization = await jsonRequest(issuer + "/mcp/oauth/device_authorization", { client_id: clientId, resource, scope: scopes.join(" "), ...(companyId ? { company_id: companyId } : {}) });
   const device = authorization.data;
   if (!authorization.ok || typeof device.device_code !== "string" || typeof device.user_code !== "string"
-    || device.verification_uri !== issuer + "/mcp-device" || typeof device.expires_in !== "number") throw new Error("Could not start device authorization.");
+    || device.verification_uri !== (approvalOrigin ?? issuer) + "/mcp-device" || typeof device.expires_in !== "number") throw new Error("Could not start device authorization.");
   const verification = new URL(device.verification_uri); verification.searchParams.set("user_code", device.user_code);
   notify(`Approve Paperclip access in your browser: ${verification}\nConfirm code: ${device.user_code}\nWaiting for your approval…`);
   let interval = typeof device.interval === "number" ? Math.max(5, device.interval) : 5;
@@ -174,7 +194,7 @@ export async function loginMcpDevice(raw: string, companyId?: string, notify: (m
     credential.companyId = connected.companyId;
     const file = credentialPath(resource);
     await replaceMcpCredential(file, credential, notify);
-    return { resource, companyId: credential.companyId };
+    return { resource, companyId: credential.companyId, scope: typeof result.data.scope === "string" ? result.data.scope : scopes.join(" ") };
   }
   throw new Error("Device authorization expired. Start login again.");
 }

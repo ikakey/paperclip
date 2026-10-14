@@ -1,14 +1,17 @@
 import type { Command } from "commander";
 import { createInterface } from "node:readline";
-import { loginMcpDevice, mcpAccessToken, mcpResource, mcpRpc } from "../client/mcp-auth.js";
+import { loginMcpDevice, mcpAccessToken, mcpApprovalOrigin, mcpResource, mcpRpc, mcpScopes } from "../client/mcp-auth.js";
 
 export function registerMcpCommands(program: Command) {
   const mcp = program.command("mcp").description("Connect an assistant to Paperclip as a consenting human");
   mcp.command("login").requiredOption("--device", "Authorize in a browser without a callback listener")
     .requiredOption("--url <url>", "Canonical Paperclip MCP URL").option("--company <id>", "Restrict consent to this organization")
-    .action(async (options: { url: string; company?: string }) => {
-      const result = await loginMcpDevice(options.url, options.company);
-      console.log(`Connected to ${result.resource}\nOrganization: ${result.companyId}`);
+    .option("--scope <scopes>", "Space- or comma-separated scopes to request (default: all public scopes)")
+    .option("--approval-origin <origin>", "HTTPS origin that hosts the approval page, when it differs from the MCP origin")
+    .action(async (options: { url: string; company?: string; scope?: string; approvalOrigin?: string }) => {
+      const result = await loginMcpDevice(options.url, options.company, console.error, {
+        scopes: mcpScopes(options.scope), ...(options.approvalOrigin ? { approvalOrigin: mcpApprovalOrigin(options.approvalOrigin) } : {}) });
+      console.log(`Connected to ${result.resource}\nOrganization: ${result.companyId}\nScopes: ${result.scope}`);
     });
   mcp.command("proxy").description("Expose the authorized Paperclip tools over local MCP stdio")
     .requiredOption("--url <url>", "The exact MCP URL used during login")
