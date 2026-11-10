@@ -155,6 +155,27 @@ describe("parseSetupTokenPrompt", () => {
     expect(result?.prompt).toBe(SETUP_TOKEN_PROMPT);
   });
 
+  it("skips the copy-mode hint that claude 2.1.295 prints between the URL and the prompt", () => {
+    const text = [
+      PREAMBLE_LINE,
+      "",
+      osc8Hyperlink(CLAUDE_COM_URL, "https://claude.com/cai/oauth/aut"),
+      osc8Hyperlink(CLAUDE_COM_URL, "horize?client_id=\u2026"),
+      "",
+      chaSpaced(["Hold", "Shift", "while", "selecting", "to", "use", "your", "terminal's", "native", "copy"]),
+      "",
+      chaSpaced(["Paste", "code", "here", "if", "prompted", ">"]),
+    ].join("\r\r\n");
+    const result = parseSetupTokenPrompt(text);
+    expect(result?.url).toBe(CLAUDE_COM_URL);
+    expect(result?.prompt).toBe(SETUP_TOKEN_PROMPT);
+  });
+
+  it("still returns null for an unknown line between the URL and the prompt", () => {
+    const text = [PREAMBLE_LINE, CLAUDE_COM_URL, "Enter the code from your other device", PROMPT_LINE].join("\n");
+    expect(parseSetupTokenPrompt(text)).toBeNull();
+  });
+
   it("returns null for a wrong host", () => {
     const badHost = CLAUDE_COM_URL.replace("https://claude.com", "https://claude.example.com");
     expect(parseSetupTokenPrompt(completeOutput(badHost))).toBeNull();

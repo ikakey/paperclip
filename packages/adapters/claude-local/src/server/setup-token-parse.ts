@@ -181,6 +181,13 @@ const URL_PREAMBLE_RE = /the url below to sign in/i;
 // the line.
 const PROMPT_LINE_RE = /^Paste code here if prompted\b[\s>*]*$/;
 
+// Informational lines that a newer `claude setup-token` (2.1.295) prints between
+// the URL block and the browser-code prompt. The prompt search skips only these
+// exact hints; any other line between the URL and the prompt still fails closed.
+const BENIGN_HINT_LINE_RES: readonly RegExp[] = [
+  /^Hold (?:Shift|Option|Alt) while selecting to use your terminal['\u2019]s native copy\.?$/,
+];
+
 // The maximum number of characters between the end of the URL preamble line and
 // the start of the URL. The Claude UI prints the URL right after the preamble.
 // The parser accepts a URL start only inside this window, so a URL far from the
@@ -375,6 +382,7 @@ function findBrowserCodePrompt(lines: string[], endLine: number, url: string): s
     // punctuation first, the same way the repeated-URL comparison needs, so a
     // repeated URL with a trailing punctuation mark still matches.
     if (trimmed.replace(TRAILING_PUNCTUATION_RE, "") === url) continue;
+    if (BENIGN_HINT_LINE_RES.some((re) => re.test(trimmed))) continue;
     return PROMPT_LINE_RE.test(trimmed) ? SETUP_TOKEN_PROMPT : null;
   }
   return null;
