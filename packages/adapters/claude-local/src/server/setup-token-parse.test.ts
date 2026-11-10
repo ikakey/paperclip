@@ -518,6 +518,30 @@ function successScreen(body: string[]): string {
 }
 
 describe("parseSetupTokenCredential", () => {
+  it("reads the token from a success screen repainted over the telemetry-off hint (2.1.295)", () => {
+    const token = "sk-ant-oat01-" + "a".repeat(66) + "b".repeat(29);
+    const DOWN = "\x1b[1B";
+    const text = [
+      "\x1b[2K\x1b[G\x1b[1A\r\x1b[1C\x1b[12A\r\x1b[1C" + DOWN + "\u2713\x1b[4GLong-lived\x1b[15Gauthentication\x1b[30Gtoken\x1b[36Gcreated\x1b[44Gsuccessfully!\r" + DOWN,
+      "\r" + DOWN + " Your OAuth token (valid for 1 year):\r" + DOWN + "\r" + DOWN,
+      " " + token.slice(0, 79) + "\r" + DOWN + " " + token.slice(79) + "\r",
+      "\x1b[1C\x1b[2BStore this\x1b[13Gtoken\x1b[21Gcurely.\x1b[29GY\x1b[31Gu won't be able to \x1b[51Gee it again.\r",
+      "\x1b[1C\x1b[2BUse\x1b[6Gthis\x1b[11Gtoken\x1b[17Gby\x1b[20Gsetting:\x1b[29Gexport\x1b[36GCLAUDE_CODE_OAUTH_TOKEN=<token>\r",
+    ].join("");
+    expect(parseSetupTokenCredential(text)).toBe(token);
+  });
+
+  it("waits while a repainted success screen is still inside the token block", () => {
+    const DOWN = "\x1b[1B";
+    const text = " Your OAuth token (valid for 1 year):\r" + DOWN + "\r" + DOWN + " sk-ant-oat01-" + "a".repeat(66) + "\r" + DOWN;
+    expect(parseSetupTokenCredential(text)).toBeNull();
+  });
+
+  it("rejects a repainted screen whose next line is not the after-anchor", () => {
+    const text = "Your OAuth token (valid for 1 year):\nsk-ant-oat01-" + "a".repeat(40) + "\nSomething else\n";
+    expect(parseSetupTokenCredential(text)).toBeNull();
+  });
+
   it("returns the de-wrapped token from the exact success record once", () => {
     const text = successScreen([TOKEN_FRAGMENT_A, TOKEN_FRAGMENT_B]);
     expect(parseSetupTokenCredential(text)).toBe(FULL_TOKEN);

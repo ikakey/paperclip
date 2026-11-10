@@ -505,6 +505,7 @@ export function parseSetupTokenCredential(text: string): string | null {
 
   const beforeIndex = singleAnchorIndex(lines, SETUP_TOKEN_BEFORE_ANCHOR);
   const afterIndex = singleAnchorIndex(lines, SETUP_TOKEN_AFTER_ANCHOR);
+  if (beforeIndex !== null && afterIndex === null) return parseDiffRenderedCredential(lines);
   if (beforeIndex === null || afterIndex === null) return null;
   if (afterIndex <= beforeIndex) return null;
 
@@ -523,4 +524,37 @@ export function parseSetupTokenCredential(text: string): string | null {
   const token = fragments.join("");
   if (!FULL_TOKEN_RE.test(token)) return null;
   return token;
+}
+
+// The visible start of the after-anchor line. With telemetry disabled
+// (DO_NOT_TRACK, DISABLE_TELEMETRY or CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC),
+// claude 2.1.295 shows an extra hint on the prompt screen. The success screen
+// then repaints over it incrementally: the terminal skips the characters that
+// already match, so the stream carries "Store this token  curely. Y u won't..."
+// instead of the full after-anchor. Only the line start is reliable.
+const DIFF_RENDERED_AFTER_ANCHOR_RE = /^Store this\b/;
+
+/**
+ * The fallback for an incrementally repainted success screen. It binds the token
+ * to the exact before-anchor (printed once, in full), reads the consecutive
+ * token-fragment lines right after it, and requires the next text line to start
+ * the after-anchor. A stream that ends inside the token block has no terminator
+ * yet and returns null, so the caller waits for more output.
+ */
+function parseDiffRenderedCredential(lines: string[]): string | null {
+  const beforeIndex = singleAnchorIndex(lines, SETUP_TOKEN_BEFORE_ANCHOR);
+  if (beforeIndex === null) return null;
+  const fragments: string[] = [];
+  for (let i = beforeIndex + 1; i < lines.length; i += 1) {
+    const trimmed = lines[i].trim();
+    if (trimmed.length === 0) continue;
+    if (TOKEN_FRAGMENT_RE.test(trimmed)) {
+      fragments.push(trimmed);
+      continue;
+    }
+    if (!DIFF_RENDERED_AFTER_ANCHOR_RE.test(trimmed) || fragments.length === 0) return null;
+    const token = fragments.join("");
+    return FULL_TOKEN_RE.test(token) ? token : null;
+  }
+  return null;
 }
