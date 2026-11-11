@@ -44,7 +44,7 @@ export function publicMcpIngressRoutes(oauth: PublicMcpOAuth, execute: ReturnTyp
   const agentConnection = endpoint === DOT_RUNNER_MCP_PATH;
   const oauthPath = agentConnection ? endpoint + "/oauth" : "/mcp/oauth";
   const issuer = agentConnection ? origin + oauthPath : origin;
-  const scopes = agentConnection ? DOT_RUNNER_MCP_SCOPES : PUBLIC_MCP_SCOPES;
+  const scopes = agentConnection ? DOT_RUNNER_MCP_SCOPES : PUBLIC_MCP_SCOPES;  // includes offline_access: MCP clients (ChatGPT) request what the resource metadata and 401 challenge list; without it no refresh token is issued and access ends after 15 min
   const metadataPath = "/.well-known/oauth-authorization-server" + (agentConnection ? oauthPath : "");
   const prefix = origin + oauthPath;
   const resourceMetadata = origin + "/.well-known/oauth-protected-resource" + endpoint;
@@ -71,7 +71,7 @@ export function publicMcpIngressRoutes(oauth: PublicMcpOAuth, execute: ReturnTyp
     next();
   });
   router.get(agentConnection ? ["/.well-known/oauth-protected-resource" + endpoint] : ["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource" + endpoint], (_req, res) => res.json({
-    resource, authorization_servers: [issuer], scopes_supported: agentConnection ? DOT_RUNNER_MCP_SCOPES : ["paperclip:read", "paperclip:write", "paperclip:configure"], bearer_methods_supported: ["header"],
+    resource, authorization_servers: [issuer], scopes_supported: scopes, bearer_methods_supported: ["header"],
     resource_name: agentConnection ? "Paperclip Dot agent" : "Paperclip",
   }));
   router.get(metadataPath, (_req, res) => res.json({
@@ -99,7 +99,7 @@ export function publicMcpIngressRoutes(oauth: PublicMcpOAuth, execute: ReturnTyp
     let principal;
     try { if (!token) throw new Error(); principal = await oauth.authenticate(token); }
     catch {
-      res.setHeader("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadata}", scope="${agentConnection ? "paperclip:agent" : "paperclip:read paperclip:write paperclip:configure"}", error="invalid_token"`);
+      res.setHeader("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadata}", scope="${scopes.join(" ")}", error="invalid_token"`);
       res.status(401).json({ error: "invalid_token" }); return;
     }
     if (req.method !== "POST") { res.setHeader("Allow", "POST"); res.status(405).end(); return; }
