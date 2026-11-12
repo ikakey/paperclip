@@ -505,6 +505,12 @@ export function createProductionSetupTokenSandboxProvider(
    * no sandbox remains to release.
    */
   async function releaseLeaseById(leaseId: string): Promise<void> {
+    if (!leaseId) {
+      // A local login holds no environment lease, so its cleanup record carries an empty lease id.
+      // Nothing to release; returning lets the reaper drop the record (12.11: 12 such records
+      // failed every 30 s because the empty id is not a valid lease id for the database).
+      return;
+    }
     const lease = await deps.environments.getLeaseById(leaseId);
     if (!lease) {
       // The lease row is already gone. No remote sandbox remains to release, so

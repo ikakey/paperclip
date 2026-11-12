@@ -1381,8 +1381,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
   async function assessDelivery(
     workspace: ExecutionWorkspaceRow,
     git: ExecutionWorkspaceCloseGitReadiness | null,
+    preloadedIssueTree?: Awaited<ReturnType<typeof listWorkspaceIssueTree>>,
   ) {
-    const issueTree = await listWorkspaceIssueTree(workspace);
+    const issueTree = preloadedIssueTree ?? await listWorkspaceIssueTree(workspace);
     const sourceIssue = issueTree.find((issue) => issue.id === workspace.sourceIssueId) ?? null;
     const sourceIssueTerminal = Boolean(sourceIssue && TERMINAL_ISSUE_STATUSES.has(sourceIssue.status));
     const subtreeTerminal = Boolean(sourceIssue && issueTree.every((issue) => TERMINAL_ISSUE_STATUSES.has(issue.status)));
@@ -2620,14 +2621,45 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         clearedStaleReopenPending: 0,
       };
 
+      // One git inspection per identical git source within this sweep: most local workspaces share one
+      // project directory, and the inspection reads only these fields (12.11).
+      const gitBySource = new Map<string, ReturnType<typeof inspectGitCloseReadiness>>();
       for (const workspace of candidates) {
         const executionWorkspace = toExecutionWorkspace(workspace);
-        const { git, statusInspectionSucceeded } = await inspectGitCloseReadiness(executionWorkspace);
+        // Cheap gate first (one DB read): a workspace whose issue tree is not fully terminal is
+        // skipped without running git. Same outcome as before, minus the git status of every
+        // candidate (12.11: 1303 open local workspaces, ~100 full git status scans per minute).
+        const issueTree = await listWorkspaceIssueTree(workspace);
+        const treeSource = issueTree.find((issue) => issue.id === workspace.sourceIssueId) ?? null;
+        if (!treeSource || !issueTree.every((issue) => TERMINAL_ISSUE_STATUSES.has(issue.status))) {
+          if (metadataHasReopenPendingConsumption(workspace.metadata as Record<string, unknown> | null)) {
+            await clearReopenPendingConsumptionUnderLock(workspace.id, {
+              expectedGeneration: readExecutionWorkspaceLifecycleGeneration(
+                workspace.metadata as Record<string, unknown> | null,
+              ),
+            });
+          }
+          result.skippedNonTerminalTree += 1;
+          continue;
+        }
+        const gitSource = JSON.stringify([
+          executionWorkspace.providerType, executionWorkspace.providerRef ?? null, executionWorkspace.cwd ?? null,
+          executionWorkspace.repoUrl ?? null, executionWorkspace.baseRef ?? null, executionWorkspace.branchName ?? null,
+          executionWorkspace.providerType === "git_worktree"
+            ? isRuntimeOwnedGitBranch(executionWorkspace.metadata)
+            : executionWorkspace.metadata?.createdByRuntime === true,
+        ]);
+        let inspection = gitBySource.get(gitSource);
+        if (!inspection) {
+          inspection = inspectGitCloseReadiness(executionWorkspace);
+          gitBySource.set(gitSource, inspection);
+        }
+        const { git, statusInspectionSucceeded } = await inspection;
         if (!statusInspectionSucceeded) {
           result.skippedUndelivered += 1;
           continue;
         }
-        const assessment = await assessDelivery(workspace, git);
+        const assessment = await assessDelivery(workspace, git, issueTree);
         const reopenPending = metadataHasReopenPendingConsumption(
           workspace.metadata as Record<string, unknown> | null,
         );

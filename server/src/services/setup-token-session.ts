@@ -343,9 +343,11 @@ export async function reapSetupTokenLeases(
         adapterType: record.adapterType,
       });
       released += 1;
-    } catch {
+    } catch (error) {
       failed += 1;
-      log("[paperclip] Setup-token reaper: a lease release failed; it stays retryable.");
+      // Diagnostic (Ika 12.11, step A): ids and the error text only; the cleanup record holds no secrets.
+      const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      log(`[paperclip] Setup-token reaper: a lease release failed; it stays retryable. lease=${record.leaseId} session=${record.sessionId} error=${reason.slice(0, 300)}`);
     }
   }
   return { released, failed };
